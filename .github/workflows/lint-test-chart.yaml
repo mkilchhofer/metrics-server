@@ -3,13 +3,11 @@ name: Lint and Test Chart
 on:
   pull_request:
     paths:
-      - .github/workflows/lint-test-chart.yaml
       - "charts/metrics-server/**"
 
 jobs:
   lint-test:
     name: Lint & Test
-    if: github.repository == 'kubernetes-sigs/metrics-server'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -68,6 +66,27 @@ jobs:
         with:
           wait: 120s
 
+      - name: Prepare existing secret test scenario
+        if: fromJSON(steps.changes.outputs.changed)
+        run: |
+          openssl req -x509 -newkey rsa:2048 -sha256 -days 365 \
+            -nodes -keyout ${TMPDIR}/tls.key -out ${TMPDIR}/tls.crt \
+            -subj "/CN=metrics-server" \
+            -addext "subjectAltName=DNS:metrics-server,DNS:metrics-server.kube-system.svc"
+
+          kubectl -n kube-system create secret generic metrics-server-existing \
+            --from-file=${TMPDIR}/tls.key \
+            --from-file=${TMPDIR}/tls.crt
+
+          cat <<EOF >> charts/metrics-server/ci/tls-existingSecret-values.yaml
+          apiService:
+            insecureSkipTLSVerify: false
+            caBundle: |
+          $(cat ${TMPDIR}/tls.crt  | sed -e "s/^/    /g")
+          EOF
+
+          rm ${TMPDIR}/tls.key ${TMPDIR}/tls.crt
+
       - name: Run chart-testing install
         if: fromJSON(steps.changes.outputs.changed)
-        run: ct install
+        run: ct install --namespace kube-system
